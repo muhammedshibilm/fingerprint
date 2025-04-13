@@ -5,11 +5,12 @@ import textwrap
 import logging
 
 # Initialize logging
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 # Use a default value for demonstration. Set the real value in Vercel Environment Variables.
-DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE")
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
+
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -440,5 +441,10 @@ def collect():
     return jsonify({"status": "success"})
 
 # For Vercel, export the Flask app without running the server directly.
-# Vercel will import this module and use the "app" variable.
-app  # Exported
+# Vercel will import this module and use the "app" variable.# Exported
+
+if __name__ == "__main__":
+    # Optional: Log a warning if DISCORD_WEBHOOK isn't set.
+    if not DISCORD_WEBHOOK:
+        print("Warning: DISCORD_WEBHOOK is not configured!")
+    app.run(debug=True) 
